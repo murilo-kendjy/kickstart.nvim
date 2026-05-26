@@ -168,6 +168,11 @@ vim.o.confirm = true
 
 -- [[ Basic Keymaps ]]
 --  See `:help vim.keymap.set()`
+vim.keymap.set('n', '<leader>k', vim.cmd.Ex, { desc = 'Back to menu' })
+vim.keymap.set('v', '<leader>y', '"+y', { desc = 'Copy to clipboard' })
+vim.keymap.set('x', '<leader>p', '"_dP')
+vim.keymap.set('n', 's', 's', { noremap = true })
+vim.keymap.set('x', 's', 's', { noremap = true })
 
 -- Clear highlights on search when pressing <Esc> in normal mode
 --  See `:help hlsearch`
@@ -255,6 +260,10 @@ require('lazy').setup({
   --
   -- Use `opts = {}` to automatically pass options to a plugin's `setup()` function, forcing the plugin to be loaded.
   --
+  --  This is equivalent to:
+  --    require('Comment').setup({})
+
+  -- "gc" to comment visual regions/lines
 
   -- Alternatively, use `config = function() ... end` for full control over the configuration.
   -- If you prefer to call `setup` explicitly, use:
@@ -593,6 +602,23 @@ require('lazy').setup({
           local client = vim.lsp.get_client_by_id(event.data.client_id)
           if client and client_supports_method(client, vim.lsp.protocol.Methods.textDocument_documentHighlight, event.buf) then
             local highlight_augroup = vim.api.nvim_create_augroup('kickstart-lsp-highlight', { clear = false })
+          end
+
+          map('<leader>co', function()
+            vim.lsp.buf.code_action {
+              apply = true,
+              context = { only = { 'source.organizeImports.ts' }, diagnostics = {} },
+            }
+          end, 'Organize Imports')
+
+          map('<leader>cru', function()
+            vim.lsp.buf.code_action {
+              apply = true,
+              context = { only = { 'source.removeUnusedImports.ts' }, diagnostics = {} },
+            }
+          end, 'Remove unused imports')
+
+          if client and client.server_capabilities.documentHighlightProvider then
             vim.api.nvim_create_autocmd({ 'CursorHold', 'CursorHoldI' }, {
               buffer = event.buf,
               group = highlight_augroup,
@@ -670,9 +696,12 @@ require('lazy').setup({
       --  - capabilities (table): Override fields in capabilities. Can be used to disable certain LSP features.
       --  - settings (table): Override the default settings passed when initializing the server.
       --        For example, to see the options for `lua_ls`, you could go to: https://luals.github.io/wiki/settings/
+
       local servers = {
-        -- clangd = {},
-        -- gopls = {},
+        clangd = {},
+        gopls = {
+          gofumpt = true,
+        },
         -- pyright = {},
         -- rust_analyzer = {},
         -- ... etc. See `:help lspconfig-all` for a list of all the pre-configured LSPs
@@ -713,7 +742,14 @@ require('lazy').setup({
       --
       -- You can add other tools here that you want Mason to install
       -- for you, so that they are available from within Neovim.
+      vim.lsp.handlers['window/showMessage'] = function(_, result, ctx)
+        if result.type == vim.lsp.protocol.MessageType.Error then
+          vim.notify(result.message, vim.log.levels.ERROR)
+        end
+      end
+
       local ensure_installed = vim.tbl_keys(servers or {})
+
       vim.list_extend(ensure_installed, {
         'stylua', -- Used to format Lua code
       })
@@ -732,6 +768,25 @@ require('lazy').setup({
             require('lspconfig')[server_name].setup(server)
           end,
         },
+        ['tsserver'] = function()
+          local function organize_imports()
+            local params = {
+              command = '_typescript.organizeImports',
+              arguments = { vim.api.nvim_buf_get_name(0) },
+              title = '',
+            }
+            vim.lsp.buf.execute_command(params)
+          end
+          require('lspconfig')['tsserver'].setup {
+            capabilities = capabilities,
+            commands = {
+              OrganizeImports = {
+                organize_imports,
+                description = 'Organize Imports',
+              },
+            },
+          }
+        end,
       }
     end,
   },
@@ -768,6 +823,13 @@ require('lazy').setup({
       end,
       formatters_by_ft = {
         lua = { 'stylua' },
+        javascript = { 'prettierd', 'prettier', stop_after_first = true },
+        typescript = { 'prettierd', 'prettier', stop_after_first = true },
+        html = { 'prettierd', 'prettier', stop_after_first = true },
+        css = { 'prettierd', 'prettier', stop_after_first = true },
+        angular = { 'prettierd', 'prettier', stop_after_first = true },
+        c = { 'clangd' },
+        cs = {},
         -- Conform can also run multiple formatters sequentially
         -- python = { "isort", "black" },
         --
@@ -799,12 +861,16 @@ require('lazy').setup({
           -- `friendly-snippets` contains a variety of premade snippets.
           --    See the README about individual language/framework/plugin snippets:
           --    https://github.com/rafamadriz/friendly-snippets
-          -- {
-          --   'rafamadriz/friendly-snippets',
-          --   config = function()
-          --     require('luasnip.loaders.from_vscode').lazy_load()
-          --   end,
-          -- },
+          {
+            'rafamadriz/friendly-snippets',
+            config = function()
+              require('luasnip').filetype_extend('javascript', { 'html' })
+              require('luasnip').filetype_extend('typescript', { 'html' })
+              require('luasnip').filetype_extend('javascriptreact', { 'html' })
+              require('luasnip').filetype_extend('typescriptreact', { 'html' })
+              require('luasnip.loaders.from_vscode').lazy_load()
+            end,
+          },
         },
         opts = {},
       },
@@ -836,6 +902,7 @@ require('lazy').setup({
         --
         -- See :h blink-cmp-config-keymap for defining your own keymap
         preset = 'default',
+        ['<Enter>'] = { 'select_and_accept', 'fallback' },
 
         -- For more advanced Luasnip keymaps (e.g. selecting choice nodes, expansion) see:
         --    https://github.com/L3MON4D3/LuaSnip?tab=readme-ov-file#keymaps
@@ -881,20 +948,23 @@ require('lazy').setup({
     -- change the command in the config to whatever the name of that colorscheme is.
     --
     -- If you want to see what colorschemes are already installed, you can use `:Telescope colorscheme`.
-    'folke/tokyonight.nvim',
+    'catppuccin/nvim',
     priority = 1000, -- Make sure to load this before all the other start plugins.
     config = function()
       ---@diagnostic disable-next-line: missing-fields
-      require('tokyonight').setup {
-        styles = {
-          comments = { italic = false }, -- Disable italics in comments
-        },
-      }
+      -- require('tokyonight').setup {
+      --   styles = {
+      --     comments = { italic = false }, -- Disable italics in comments
+      --   },
+      -- }
 
       -- Load the colorscheme here.
       -- Like many other themes, this one has different styles, and you could load
       -- any other, such as 'tokyonight-storm', 'tokyonight-moon', or 'tokyonight-day'.
-      vim.cmd.colorscheme 'tokyonight-night'
+      vim.cmd.colorscheme 'catppuccin-mocha'
+
+      -- You can configure highlights by doing something like:
+      vim.cmd.hi 'mComment gui=none'
     end,
   },
 
@@ -917,7 +987,7 @@ require('lazy').setup({
       -- - saiw) - [S]urround [A]dd [I]nner [W]ord [)]Paren
       -- - sd'   - [S]urround [D]elete [']quotes
       -- - sr)'  - [S]urround [R]eplace [)] [']
-      require('mini.surround').setup()
+      -- require('mini.surround').setup()
 
       -- Simple and easy statusline.
       --  You could remove this setup call if you don't like it,
@@ -973,7 +1043,7 @@ require('lazy').setup({
   --  Here are some example plugins that I've included in the Kickstart repository.
   --  Uncomment any of the lines below to enable them (you will need to restart nvim).
   --
-  -- require 'kickstart.plugins.debug',
+  require 'kickstart.plugins.debug',
   -- require 'kickstart.plugins.indent_line',
   -- require 'kickstart.plugins.lint',
   -- require 'kickstart.plugins.autopairs',
